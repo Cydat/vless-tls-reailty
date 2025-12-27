@@ -65,7 +65,7 @@ check_and_install_xray() {
 
 #====== 流媒体解锁检测 ======
 check_streaming_unlock() {
-  绿 "==== 流媒体解锁检测 ===="
+  green "==== 流媒体解锁检测 ===="
 
   test_site() {
     local name=$1 url=$2 keyword=$3
@@ -111,12 +111,12 @@ check_ip_clean() {
 show_deployed_protocols() {
   CONFIG="/usr/local/etc/xray/config.json"
   if [ !  -f "$CONFIG" ]; then
-    红 "❌ 找不到 Xray 配置文件：$CONFIG"
+    red "❌ 找不到 Xray 配置文件：$CONFIG"
     read -rp "按任意键返回菜单..."
     return
   fi
 
-  绿 "📥 正在分析已部署协议..."
+  green "📥 正在分析已部署协议..."
 
   IPS=$(get_ip_addresses)
   IP_IPV4=$(echo "$IPS" | cut -d'|' -f1 | cut -d': ' -f2)
@@ -125,7 +125,7 @@ show_deployed_protocols() {
   mapfile -t INBOUNDS < <(jq -c '.inbounds[]' "$CONFIG")
 
   if [ ${#INBOUNDS[@]} -eq 0 ]; then
-    红 "未发现入站协议配置"
+    red "未发现入站协议配置"
     read -rp "按任意键返回菜单..."
     return
   fi
@@ -195,16 +195,16 @@ show_deployed_protocols() {
           password=$(echo "$client" | jq -r '.password')
           remark=$(echo "$client" | jq -r '.email // "trojan"')
           if [ -n "$IP_IPV4" ]; then
-            绿 "🎯 Trojan IPv4 链接：trojan://$password@$IP_IPV4:$port#${remark}"
+            green "🎯 Trojan IPv4 链接：trojan://$password@$IP_IPV4:$port#${remark}"
           fi
           if [ -n "$IP_IPV6" ]; then
-            绿 "🎯 Trojan IPv6 链接：trojan://$password@[$IP_IPV6]:$port#${remark}"
+            green "🎯 Trojan IPv6 链接：trojan://$password@[$IP_IPV6]:$port#${remark}"
           fi
         done
         ;;
 
       *)
-        黄 "⚠️  未支持的协议:  $proto"
+        yellow "⚠️  未支持的协议:  $proto"
         ;;
     esac
   done
@@ -364,7 +364,7 @@ EOF
       read -rp "请输入原始 VLESS 链接: " old_link
       read -rp "请输入中转服务器地址（IP 或域名）: " new_server
       new_link=$(echo "$old_link" | sed -E "s#(@)[^: ]+#\\1$new_server#")
-      绿 "🎯 生成的新中转链接："
+      green "🎯 生成的新中转链接："
       echo "$new_link"
       read -rp "按任意键返回菜单..."
       ;;
@@ -373,7 +373,7 @@ EOF
       echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
       echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
       sysctl -p
-      绿 "✅ BBR 加速已启用"
+      green "✅ BBR 加速已启用"
       read -rp "按任意键返回菜单..."
       ;;
 
@@ -398,7 +398,7 @@ EOF
       systemctl stop xray
       systemctl disable xray
       rm -rf /usr/local/etc/xray /usr/local/bin/xray
-      绿 "✅ Xray 已卸载"
+      green "✅ Xray 已卸载"
       read -rp "按任意键返回菜单..."
       ;;
 
@@ -411,7 +411,7 @@ EOF
       ;;
 
     *)
-      红 "❌ 无效选项，请重试"
+      red "❌ 无效选项，请重试"
       sleep 1
       ;;
   esac
