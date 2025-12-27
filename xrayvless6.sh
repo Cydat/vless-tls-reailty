@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
-#====== 彩色输出函数 ======
+#====== 彩色输出函数 (必须放前面) ======
 green() { echo -e "\033[32m$1\033[0m"; }
 red()   { echo -e "\033[31m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; } 
-
-#====== 检测操作系统 ======
+#====== 安装依赖 ======
 detect_os() {
   if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -16,7 +15,6 @@ detect_os() {
   echo "$OS"
 }
 OS=$(detect_os)
-
 install_dependencies() {
   green "检测到系统: $OS，安装依赖..."
   case "$OS" in
@@ -38,58 +36,99 @@ install_dependencies() {
       ;;
   esac
 }
+# 安装前置
 install_dependencies
 
-#====== 检测并安装 Xray ======
+#====== 检测xray是否安装 =====
 check_and_install_xray() {
   if command -v xray >/dev/null 2>&1; then
-    green "✅ Xray 已安装"
+    green "✅ Xray 已安装，跳过安装"
   else
-    green "❗ 正在安装 Xray (IPv6 环境)..."
-    if [ "$OS" = "alpine" ]; then
-        bash <(curl -L https://github.com/Cydat/vless-tls-reailty/raw/refs/heads/main/xrayinstall-alpine.sh)
-    else
-        bash <(curl -L https://github.com/Cydat/vless-tls-reailty/raw/refs/heads/main/xrayinstall.sh)
-    fi
+    green "❗检测到 Xray 未安装，正在安装..."
+	if [ "$OS" = "alpine" ]; then
+		bash <(curl -L https://github.com/Cydat/vless-tls-reailty/raw/refs/heads/main/xrayinstall-alpine.sh)
+	else
+		bash <(curl -L https://github.com/Cydat/vless-tls-reailty/raw/refs/heads/main/xrayinstall.sh)
+	fi
+    
     XRAY_BIN=$(command -v xray || echo "/usr/local/bin/xray")
-    if [ ! -x "$XRAY_BIN" ]; then red "❌ 安装失败"; exit 1; fi
+    if [ ! -x "$XRAY_BIN" ]; then
+      red "❌ Xray 安装失败，请检查"
+      exit 1
+    fi
+    green "✅ Xray 安装完成"
+  fi
+}
+#====== 流媒体解锁检测 ======
+check_streaming_unlock() {
+  bash <(curl -L ip.check.place) -y
+  read -rp "按任意键返回菜单..."
+}
+
+#====== IP 纯净度检测 ======
+check_ip_clean() {
+  bash <(curl -L ip.check.place) -y
+  read -rp "按任意键返回菜单..."
+}
+
+#===== 新增：优先 IPv6，回退 IPv4 的获取函数 =====
+get_ip_prefer_ipv6() {
+  # 尝试多个常见的公网 IP 服务，优先使用 IPv6（curl -6）
+  local ip=""
+  for url in "https://ipv6.ip.sb" "https://ifconfig.co" "https://ifconfig.me" "https://ifconfig.io"; do
+    ip=$(curl -6 -s "$url" || true)
+    if [ -n "$ip" ]; then
+      echo "$ip"
+      return 0
+    fi
+  done
+  # 若没有 IPv6，可回退到 IPv4（使用 -4 保证返回 IPv4）
+  for url in "https://ipv4.ip.sb" "https://ifconfig.co" "https://ifconfig.me" "https://ifconfig.io"; do
+    ip=$(curl -4 -s "$url" || true)
+    if [ -n "$ip" ]; then
+      echo "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 将主机格式化：若是 IPv6（含冒号），返回带方括号的形式 [IPv6]
+format_host() {
+  local host="$1"
+  if [[ "$host" == *:* ]]; then
+    # 移除已有方括号（如果用户已输入过带括号的 IPv6）
+    host="${host#\[}"
+    host="${host%\]}"
+    echo "[$host]"
+  else
+    echo "$host"
   fi
 }
 
-#====== 获取 IPv6 地址函数 ======
-get_ipv6() {
-  # 优先尝试多个 IPv6 获取接口
-  local ip=$(curl -6 -s --max-time 5 https://6.ipw.cn || curl -6 -s --max-time 5 https://api64.ipify.org || echo "")
-  if [ -z "$ip" ]; then
-    red "❌ 未检测到有效的公网 IPv6 地址，请确保服务器已开启 IPv6"
-    exit 1
-  fi
-  echo "$ip"
-}
-
-#====== Trojan Reality (IPv6 版) ======
 install_trojan_reality() {
   check_and_install_xray
   XRAY_BIN=$(command -v xray || echo "/usr/local/bin/xray")
-  read -rp "监听端口 (默认 443): " PORT
-  PORT=${PORT:-443}
-  read -rp "节点备注: " REMARK
-  REMARK=${REMARK:-Trojan_IPv6}
+  read -rp "监听端口（如 443）: " PORT
+  read -rp "节点备注（如：trojanNode）: " REMARK
 
   PASSWORD=$(openssl rand -hex 8)
   KEYS=$($XRAY_BIN x25519)
   PRIV_KEY=$(echo "$KEYS" | awk '/PrivateKey:/ {print $2}')
-  PUB_KEY=$(echo "$KEYS" | awk '/PublicKey:/ {print $2}') # 修正原脚本变量名错误
+  PUB_KEY=$(echo "$KEYS" | awk '/PublicKey:/ {print $2}')
   SHORT_ID=$(head -c 4 /dev/urandom | xxd -p)
   SNI="icloud.cdn-apple.com"
 
+  mkdir -p /usr/local/etc/xray
   cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": { "loglevel": "warning" },
   "inbounds": [{
     "port": $PORT,
     "protocol": "trojan",
-    "settings": { "clients": [{ "password": "$PASSWORD", "email": "$REMARK"}] },
+    "settings": {
+      "clients": [{ "password": "$PASSWORD", "email": "$REMARK"}]
+    },
     "streamSettings": {
       "network": "tcp",
       "security": "reality",
@@ -107,34 +146,53 @@ install_trojan_reality() {
 }
 EOF
 
-  # 重启服务
-  [ "$OS" = "alpine" ] && (rc-service xray restart; rc-update add xray default) || (systemctl restart xray; systemctl enable xray)
-  
-  IP=$(get_ipv6)
-  # IPv6 链接必须给 IP 加上中括号 []
-  LINK="trojan://$PASSWORD@[$IP]:$PORT?security=reality&sni=$SNI&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp&headerType=none#$REMARK"
-  green "✅ Trojan Reality IPv6 节点："
+  if [ "$OS" = "alpine" ]; then
+      rc-service xray restart
+      rc-update add xray default
+  else
+      systemctl daemon-reexec
+      systemctl restart xray
+      systemctl enable xray
+  fi
+
+  # 获取公网 IP（优先 IPv6）
+  RAW_IP=$(get_ip_prefer_ipv6 || true)
+  if [ -z "$RAW_IP" ]; then
+    红 "无法获取公网 IP（既无 IPv6 也无 IPv4），请检查网络"
+    read -rp "按任意键返回菜单..."
+    return 1
+  fi
+  HOST_FMT=$(format_host "$RAW_IP")
+
+  LINK="trojan://$PASSWORD@$HOST_FMT:$PORT?security=reality&sni=$SNI&pbk=$PUB_KEY&sid=$SHORT_ID&type=tcp&headerType=none#$REMARK"
+  绿 "✅ Trojan Reality 节点链接如下："
   echo "$LINK"
   read -rp "按任意键返回菜单..."
 }
-
 #====== 主菜单 ======
 while true; do
   clear
-  green "======= VLESS Reality IPv6 专用脚本 ======="
-  echo "1) 安装 VLESS Reality Vision (IPv6)"  
-  echo "2) 安装 Trojan Reality (IPv6)"
-  echo "3) 开启 BBR 加速"
-  echo "4) 卸载 Xray"
+  绿 "AD：优秀流媒体便宜LXC小鸡：伤心的云 sadidc.cn"
+  绿 "AD：低价精品线路KVM & LXC：拼好鸽 gelxc.cloud"
+  绿 "AD: 大量优秀解锁 & 优化线路KVM: jia cloud jiavps.com"
+  绿 "======= VLESS Reality 一键脚本V6.1正式版 by Lorry-San（💩山Pro Max） ======="
+  echo "1) 安装并配置 VLESS Reality Vision节点"  
+  echo "2）生成Trojan Reality节点"
+  echo "3) 生成 VLESS 中转链接"
+  echo "4) 开启 BBR 加速"
+  echo "5) 检查 IP 纯净度 & 流媒体解锁"
+  echo "6) Ookla Speedtest 测试"
+  echo "7) 卸载 Xray"
   echo "0) 退出"
-  read -rp "选择: " choice
+  echo
+  read -rp "请选择操作: " choice
 
   case "$choice" in
     1)
       check_and_install_xray
       XRAY_BIN=$(command -v xray || echo "/usr/local/bin/xray")
-      read -rp "端口: " PORT
-      read -rp "备注: " REMARK
+      read -rp "监听端口（如 443）: " PORT
+      read -rp "节点备注: " REMARK
       UUID=$(cat /proc/sys/kernel/random/uuid)
       KEYS=$($XRAY_BIN x25519)
       PRIV_KEY=$(echo "$KEYS" | awk '/PrivateKey:/ {print $2}')
@@ -142,6 +200,7 @@ while true; do
       SHORT_ID=$(head -c 4 /dev/urandom | xxd -p)
       SNI="icloud.cdn-apple.com"
 
+      mkdir -p /usr/local/etc/xray
       cat > /usr/local/etc/xray/config.json <<EOF
 {
   "log": { "loglevel": "warning" },
@@ -168,27 +227,94 @@ while true; do
   "outbounds": [{ "protocol": "freedom" }]
 }
 EOF
-      [ "$OS" = "alpine" ] && (rc-service xray restart) || (systemctl restart xray)
-      IP=$(get_ipv6)
-      LINK="vless://$UUID@[$IP]:$PORT?type=tcp&security=reality&flow=xtls-rprx-vision&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID#$REMARK"
-      green "✅ VLESS IPv6 节点："
+
+	  if [ "$OS" = "alpine" ]; then
+	      rc-service xray restart
+	      rc-update add xray default
+	  else
+	      systemctl daemon-reexec
+          systemctl restart xray
+          systemctl enable xray
+	  fi
+
+      # 获取公网 IP（优先 IPv6）
+      RAW_IP=$(get_ip_prefer_ipv6 || true)
+      if [ -z "$RAW_IP" ]; then
+        红 "无法获取公网 IP（既无 IPv6 也无 IPv4），请检查网络"
+        read -rp "按任意键返回菜单..."
+        continue
+      fi
+      HOST_FMT=$(format_host "$RAW_IP")
+
+      LINK="vless://$UUID@$HOST_FMT:$PORT?type=tcp&security=reality&flow=xtls-rprx-vision&sni=$SNI&fp=chrome&pbk=$PUB_KEY&sid=$SHORT_ID#$REMARK"
+      绿 "✅ 节点链接如下："
       echo "$LINK"
       read -rp "按任意键返回菜单..."
       ;;
-    2) install_trojan_reality ;;
+    2)
+      install_trojan_reality
+      ;;
     3)
+      read -rp "请输入原始 VLESS 链接: " old_link
+      read -rp "请输入中转服务器地址（IP 或域名，IPv6 可省略方括号）: " new_server_raw
+      # 如果用户输入的是裸 IPv6（含冒号），则为安全起见添加方括号
+      new_server=$(format_host "$new_server_raw")
+      # 将 @后面的主机部分替换为 new_server（支持带方括号的 IPv6）
+      # 先把 old_link 中的@和:之后的端口分离，然后重组
+      proto_and_rest=$(echo "$old_link" | sed -E 's#^([a-zA-Z0-9+.-]+://)##')
+      scheme=$(echo "$old_link" | sed -E 's#^([a-zA-Z0-9+.-]+://).*#\1#')
+      # 把 user@host:port?... 分解为 user 和 后面的部分
+      user_and_rest=$(echo "$proto_and_rest" | sed -E 's#@#@#' )
+      # 简单替换 host 部分（这是一个保守的替换，假设原链格式为 proto://user@host:port?...）
+      new_link=$(echo "$old_link" | sed -E "s#(@)[^:/?#\\[]+|(@)\\[[^\\]]+\\]#\\1${new_server}#")
+      green "🎯 生成的新中转链接："
+      echo "$new_link"
+      read -rp "按任意键返回菜单..."
+      ;;
+
+    4)
       echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
       echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
       sysctl -p
-      green "✅ BBR 已开启"
-      read -rp "按任意键..."
+      green "✅ BBR 加速已启用"
+      read -rp "按任意键返回菜单..."
       ;;
-    4)
-      [ "$OS" = "alpine" ] && rc-service xray stop || systemctl stop xray
+
+    5)
+      check_streaming_unlock
+      ;;
+
+    6)
+      wget -q https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-x86_64.tgz
+      tar -zxf ookla-speedtest-1.2.0-linux-x86_64.tgz
+      chmod +x speedtest
+      ./speedtest --accept-license --accept-gdpr
+      rm -f speedtest speedtest.5 speedtest.md ookla-speedtest-1.2.0-linux-x86_64.tgz
+      read -rp "按任意键返回菜单..."
+      ;;
+
+    7)
+      if [ "$OS" = "alpine" ]; then
+	   	rc-service xray stop
+        rc-update del xray
+	  else
+	  	systemctl stop xray
+        systemctl disable xray
+	  fi
+      
+      
       rm -rf /usr/local/etc/xray /usr/local/bin/xray
-      green "✅ 已卸载"
+      green "✅ Xray 已卸载"
+      read -rp "按任意键返回菜单..."
+      ;;
+
+    0)
+      exit 0
+      ;;
+
+    *)
+      red "❌ 无效选项，请重试"
       sleep 1
       ;;
-    0) exit 0 ;;
   esac
 done
